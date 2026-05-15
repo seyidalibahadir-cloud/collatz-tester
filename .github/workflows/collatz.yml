@@ -1,38 +1,57 @@
-name: Collatz Search
+name: Collatz Research
 
 on:
   workflow_dispatch:
     inputs:
+
       limit:
-        description: "Kaç sayıya kadar test edilsin?"
-        required: true
-        default: "100000"
-      max_steps:
-        description: "Bir sayı için en fazla kaç adım izlensin?"
+        description: "Tarama limiti"
         required: true
         default: "1000000"
 
+      max_steps:
+        description: "Maksimum adım"
+        required: true
+        default: "1000000"
+
+      workers:
+        description: "CPU worker sayısı"
+        required: true
+        default: "4"
+
 jobs:
-  search:
+
+  research:
+
     runs-on: ubuntu-latest
 
+    timeout-minutes: 360
+
     steps:
-      - name: Depoyu Klonla
+
+      - name: Repo indir
         uses: actions/checkout@v4
 
-      - name: Python Ortamını Kur
+      - name: Python kur
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Collatz Taramasını Çalıştır
+      - name: Sistem bilgisi
+        run: |
+          python --version
+          nproc
+
+      - name: Collatz araştırmasını çalıştır
         env:
           LIMIT: ${{ inputs.limit }}
           MAX_STEPS: ${{ inputs.max_steps }}
+          WORKERS: ${{ inputs.workers }}
           OUTPUT_DIR: reports
+
         run: python collatz.py
 
-      - name: Raporları Artifact Olarak Yükle
+      - name: Rapor yükle
         if: always()
         uses: actions/upload-artifact@v4
         with:
