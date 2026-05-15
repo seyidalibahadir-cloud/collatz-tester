@@ -1,20 +1,40 @@
-name: Collatz Test
+name: Collatz Search
 
 on:
   workflow_dispatch:
+    inputs:
+      limit:
+        description: "Kaç sayıya kadar test edilsin?"
+        required: true
+        default: "100000"
+      max_steps:
+        description: "Bir sayı için en fazla kaç adım izlenmesin?"
+        required: true
+        default: "1000000"
 
 jobs:
-  test:
+  search:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Repo indir
+      - name: Kodu al
         uses: actions/checkout@v4
 
       - name: Python kur
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
-      - name: Program çalıştır
+      - name: Collatz taramasını çalıştır
+        env:
+          LIMIT: ${{ inputs.limit }}
+          MAX_STEPS: ${{ inputs.max_steps }}
+          OUTPUT_DIR: reports
         run: python collatz.py
+
+      - name: Raporu yükle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: collatz-report
+          path: reports/
