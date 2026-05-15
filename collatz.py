@@ -4,34 +4,44 @@ import sys
 import time
 from pathlib import Path
 
-
 LIMIT = int(os.getenv("LIMIT", "100000"))
 MAX_STEPS = int(os.getenv("MAX_STEPS", "1000000"))
 OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "reports"))
 
+# Global Cache: Daha önce hesaplanan sayılar için (hedefe_kalan_adim_sayisi, en_yuksek_deger) tutar.
+# 1 sayısı 0 adımda kendisine ulaşır, gördüğü en yüksek değer 1'dir.
+memo = {1: (0, 1)}
 
 def collatz_next(n: int) -> int:
     return n // 2 if n % 2 == 0 else 3 * n + 1
 
-
 def analyze_number(start: int, max_steps: int):
     n = start
-    seen = {}
-    path = [n]
+    seen_in_path = {}
+    path = []
     highest = n
 
     for step in range(max_steps):
-        if n == 1:
+        # Sayı daha önce çözülüp önbelleğe alındıysa, hesaplamayı kes ve sonucu birleştir.
+        if n in memo:
+            cached_steps, cached_highest = memo[n]
+            total_steps = step + cached_steps
+            overall_highest = max(highest, cached_highest)
+
+            # Sadece başlangıç değerini önbelleğe eklemek performansı katlar.
+            memo[start] = (total_steps, overall_highest)
+
             return {
                 "status": "ok",
                 "start": start,
-                "steps": step,
-                "highest": highest,
-                "path_prefix": path[:25],
+                "steps": total_steps,
+                "highest": overall_highest,
+                "path_prefix": path[:25] if path else [start],
             }
 
-        if n in seen:
-            cycle_start_index = seen[n]
+        # Anomali/Döngü tespiti
+        if n in seen_in_path:
+            cycle_start_index = seen_in_path[n]
             cycle = path[cycle_start_index:]
             return {
                 "status": "cycle",
@@ -42,12 +52,14 @@ def analyze_number(start: int, max_steps: int):
                 "path_prefix": path[:25],
             }
 
-        seen[n] = step
-        n = collatz_next(n)
+        seen_in_path[n] = step
         path.append(n)
+        
+        n = collatz_next(n)
         if n > highest:
             highest = n
 
+    # MAX_STEPS sınırına takılanlar
     return {
         "status": "timeout",
         "start": start,
@@ -55,7 +67,6 @@ def analyze_number(start: int, max_steps: int):
         "highest": highest,
         "path_prefix": path[:25],
     }
-
 
 def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -68,6 +79,8 @@ def main():
 
     counterexample = None
     checked = 0
+
+    print(f"Collatz taraması başlatılıyor. Limit: {LIMIT}, Max Adım: {MAX_STEPS}")
 
     for i in range(1, LIMIT + 1):
         result = analyze_number(i, MAX_STEPS)
@@ -85,7 +98,7 @@ def main():
             counterexample = result
             break
 
-        if i % max(1, LIMIT // 20) == 0:
+        if i % max(1, LIMIT // 10) == 0:
             print(f"İlerleme: {i}/{LIMIT}")
 
     elapsed = time.time() - started
@@ -108,30 +121,34 @@ def main():
 
     json_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    lines = []
-    lines.append("COLLATZ RAPORU")
-    lines.append(f"Limit: {LIMIT}")
-    lines.append(f"Maksimum adım sınırı: {MAX_STEPS}")
-    lines.append(f"Kontrol edilen sayı: {checked}")
-    lines.append(f"Süre: {round(elapsed, 3)} saniye")
-    lines.append(f"En uzun zincir: {max_steps_seen} (sayı: {max_steps_number})")
-    lines.append(f"En büyük ara değer: {max_value_seen} (sayı: {max_value_number})")
-    lines.append(f"Karşı örnek bulundu mu: {counterexample is not None}")
+    lines = [
+        "COLLATZ RAPORU",
+        f"Limit: {LIMIT}",
+        f"Maksimum adım sınırı: {MAX_STEPS}",
+        f"Kontrol edilen sayı: {checked}",
+        f"Süre: {round(elapsed, 3)} saniye",
+        f"En uzun zincir: {max_steps_seen} (sayı: {max_steps_number})",
+        f"En büyük ara değer: {max_value_seen} (sayı: {max_value_number})",
+        f"Karşı örnek bulundu mu: {counterexample is not None}"
+    ]
 
     if counterexample:
-        lines.append("")
-        lines.append("KARŞI ÖRNEK / ANOMALİ:")
-        lines.append(json.dumps(counterexample, indent=2, ensure_ascii=False))
+        lines.extend([
+            "",
+            "KARŞI ÖRNEK / ANOMALİ TESPİT EDİLDİ:",
+            json.dumps(counterexample, indent=2, ensure_ascii=False)
+        ])
         print("\n".join(lines))
         txt_path.write_text("\n".join(lines), encoding="utf-8")
         sys.exit(1)
 
-    lines.append("")
-    lines.append("Sonuç: Bu aralıkta 1'e ulaşmayan sayı bulunmadı.")
+    lines.extend([
+        "",
+        "Sonuç: Bu aralıkta 1'e ulaşmayan sayı bulunmadı."
+    ])
     print("\n".join(lines))
     txt_path.write_text("\n".join(lines), encoding="utf-8")
     sys.exit(0)
-
 
 if __name__ == "__main__":
     main()
