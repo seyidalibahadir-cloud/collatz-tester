@@ -8,7 +8,7 @@ on:
         required: true
         default: "100000"
       max_steps:
-        description: "Bir sayı için en fazla kaç adım izlenmesin?"
+        description: "Bir sayı için en fazla kaç adım izlensin?"
         required: true
         default: "1000000"
 
@@ -17,22 +17,22 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Kodu al
+      - name: Depoyu Klonla
         uses: actions/checkout@v4
 
-      - name: Python kur
+      - name: Python Ortamını Kur
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Collatz taramasını çalıştır
+      - name: Collatz Taramasını Çalıştır
         env:
           LIMIT: ${{ inputs.limit }}
           MAX_STEPS: ${{ inputs.max_steps }}
           OUTPUT_DIR: reports
         run: python collatz.py
 
-      - name: Raporu yükle
+      - name: Raporları Artifact Olarak Yükle
         if: always()
         uses: actions/upload-artifact@v4
         with:
