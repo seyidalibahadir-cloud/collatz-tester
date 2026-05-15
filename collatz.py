@@ -1,154 +1,198 @@
 import json
+import math
 import os
 import sys
 import time
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
-LIMIT = int(os.getenv("LIMIT", "100000"))
+LIMIT = int(os.getenv("LIMIT", "1000000"))
 MAX_STEPS = int(os.getenv("MAX_STEPS", "1000000"))
+WORKERS = int(os.getenv("WORKERS", "4"))
 OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "reports"))
 
-# Global Cache: Daha önce hesaplanan sayılar için (hedefe_kalan_adim_sayisi, en_yuksek_deger) tutar.
-# 1 sayısı 0 adımda kendisine ulaşır, gördüğü en yüksek değer 1'dir.
-memo = {1: (0, 1)}
+GLOBAL_MEMO = {1: 0}
+
 
 def collatz_next(n: int) -> int:
     return n // 2 if n % 2 == 0 else 3 * n + 1
 
-def analyze_number(start: int, max_steps: int):
+
+def analyze_number(start: int):
     n = start
-    seen_in_path = {}
-    path = []
+
+    local_seen = set()
     highest = n
+    steps = 0
 
-    for step in range(max_steps):
-        # Sayı daha önce çözülüp önbelleğe alındıysa, hesaplamayı kes ve sonucu birleştir.
-        if n in memo:
-            cached_steps, cached_highest = memo[n]
-            total_steps = step + cached_steps
-            overall_highest = max(highest, cached_highest)
+    while n != 1 and steps < MAX_STEPS:
 
-            # Sadece başlangıç değerini önbelleğe eklemek performansı katlar.
-            memo[start] = (total_steps, overall_highest)
-
-            return {
-                "status": "ok",
-                "start": start,
-                "steps": total_steps,
-                "highest": overall_highest,
-                "path_prefix": path[:25] if path else [start],
-            }
-
-        # Anomali/Döngü tespiti
-        if n in seen_in_path:
-            cycle_start_index = seen_in_path[n]
-            cycle = path[cycle_start_index:]
+        if n in local_seen:
             return {
                 "status": "cycle",
                 "start": start,
-                "steps": step,
+                "steps": steps,
                 "highest": highest,
-                "cycle": cycle,
-                "path_prefix": path[:25],
             }
 
-        seen_in_path[n] = step
-        path.append(n)
-        
+        local_seen.add(n)
+
         n = collatz_next(n)
+
         if n > highest:
             highest = n
 
-    # MAX_STEPS sınırına takılanlar
+        steps += 1
+
+    if n != 1:
+        return {
+            "status": "timeout",
+            "start": start,
+            "steps": steps,
+            "highest": highest,
+        }
+
     return {
-        "status": "timeout",
+        "status": "ok",
         "start": start,
-        "steps": max_steps,
+        "steps": steps,
         "highest": highest,
-        "path_prefix": path[:25],
     }
 
-def main():
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    started = time.time()
 
-    max_steps_seen = -1
+def chunkify(limit, parts):
+    size = math.ceil(limit / parts)
+
+    chunks = []
+
+    start = 1
+
+    while start <= limit:
+        end = min(start + size - 1, limit)
+        chunks.append((start, end))
+        start = end + 1
+
+    return chunks
+
+
+def process_chunk(chunk):
+    start, end = chunk
+
+    max_steps = -1
     max_steps_number = None
-    max_value_seen = -1
+
+    max_value = -1
     max_value_number = None
 
-    counterexample = None
-    checked = 0
+    anomaly = None
 
-    print(f"Collatz taraması başlatılıyor. Limit: {LIMIT}, Max Adım: {MAX_STEPS}")
+    for i in range(start, end + 1):
 
-    for i in range(1, LIMIT + 1):
-        result = analyze_number(i, MAX_STEPS)
-        checked += 1
+        result = analyze_number(i)
 
-        if result["steps"] > max_steps_seen:
-            max_steps_seen = result["steps"]
+        if result["steps"] > max_steps:
+            max_steps = result["steps"]
             max_steps_number = i
 
-        if result["highest"] > max_value_seen:
-            max_value_seen = result["highest"]
+        if result["highest"] > max_value:
+            max_value = result["highest"]
             max_value_number = i
 
         if result["status"] != "ok":
-            counterexample = result
+            anomaly = result
             break
 
-        if i % max(1, LIMIT // 10) == 0:
-            print(f"İlerleme: {i}/{LIMIT}")
+    return {
+        "checked_from": start,
+        "checked_to": end,
+        "max_steps": max_steps,
+        "max_steps_number": max_steps_number,
+        "max_value": max_value,
+        "max_value_number": max_value_number,
+        "anomaly": anomaly,
+    }
 
-    elapsed = time.time() - started
+
+def main():
+
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    started = time.time()
+
+    chunks = chunkify(LIMIT, WORKERS)
+
+    print(f"Başlatıldı")
+    print(f"Limit: {LIMIT}")
+    print(f"Worker sayısı: {WORKERS}")
+
+    results = []
+
+    with ProcessPoolExecutor(max_workers=WORKERS) as executor:
+
+        futures = [executor.submit(process_chunk, c) for c in chunks]
+
+        for future in futures:
+            result = future.result()
+
+            print(
+                f"Tamamlandı: "
+                f"{result['checked_from']} - {result['checked_to']}"
+            )
+
+            results.append(result)
+
+    elapsed = round(time.time() - started, 3)
+
+    anomaly = None
+
+    global_max_steps = -1
+    global_max_steps_number = None
+
+    global_max_value = -1
+    global_max_value_number = None
+
+    for r in results:
+
+        if r["max_steps"] > global_max_steps:
+            global_max_steps = r["max_steps"]
+            global_max_steps_number = r["max_steps_number"]
+
+        if r["max_value"] > global_max_value:
+            global_max_value = r["max_value"]
+            global_max_value_number = r["max_value_number"]
+
+        if r["anomaly"]:
+            anomaly = r["anomaly"]
 
     report = {
         "limit": LIMIT,
-        "max_steps_cap": MAX_STEPS,
-        "checked": checked,
-        "elapsed_seconds": round(elapsed, 3),
-        "max_steps_seen": max_steps_seen,
-        "max_steps_number": max_steps_number,
-        "max_value_seen": max_value_seen,
-        "max_value_number": max_value_number,
-        "counterexample_found": counterexample is not None,
-        "counterexample": counterexample,
+        "workers": WORKERS,
+        "elapsed_seconds": elapsed,
+        "max_steps": global_max_steps,
+        "max_steps_number": global_max_steps_number,
+        "max_value": global_max_value,
+        "max_value_number": global_max_value_number,
+        "anomaly_found": anomaly is not None,
+        "anomaly": anomaly,
     }
 
-    json_path = OUTPUT_DIR / "collatz_report.json"
-    txt_path = OUTPUT_DIR / "collatz_report.txt"
+    report_path = OUTPUT_DIR / "collatz_report.json"
 
-    json_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    report_path.write_text(
+        json.dumps(report, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
 
-    lines = [
-        "COLLATZ RAPORU",
-        f"Limit: {LIMIT}",
-        f"Maksimum adım sınırı: {MAX_STEPS}",
-        f"Kontrol edilen sayı: {checked}",
-        f"Süre: {round(elapsed, 3)} saniye",
-        f"En uzun zincir: {max_steps_seen} (sayı: {max_steps_number})",
-        f"En büyük ara değer: {max_value_seen} (sayı: {max_value_number})",
-        f"Karşı örnek bulundu mu: {counterexample is not None}"
-    ]
+    print("\n===== RAPOR =====")
+    print(json.dumps(report, indent=2, ensure_ascii=False))
 
-    if counterexample:
-        lines.extend([
-            "",
-            "KARŞI ÖRNEK / ANOMALİ TESPİT EDİLDİ:",
-            json.dumps(counterexample, indent=2, ensure_ascii=False)
-        ])
-        print("\n".join(lines))
-        txt_path.write_text("\n".join(lines), encoding="utf-8")
+    if anomaly:
+        print("\nANOMALİ BULUNDU")
         sys.exit(1)
 
-    lines.extend([
-        "",
-        "Sonuç: Bu aralıkta 1'e ulaşmayan sayı bulunmadı."
-    ])
-    print("\n".join(lines))
-    txt_path.write_text("\n".join(lines), encoding="utf-8")
+    print("\nKarşı örnek bulunamadı.")
     sys.exit(0)
+
 
 if __name__ == "__main__":
     main()
